@@ -1,0 +1,20 @@
+[run]
+source =
+    run_phase0
+    src
+    agents.phase0
+    agents.quality
+    adapters
+
+[report]
+show_missing = True
+skip_covered = False
+omit =
+    */__pycache__/*
+    archive/*
+    outputs/*
+    docs/*
+    tests/*
+
+[json]
+pretty_print = True

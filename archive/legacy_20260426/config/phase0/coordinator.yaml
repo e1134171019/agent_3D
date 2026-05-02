@@ -1,0 +1,225 @@
+# Phase-0 Coordinator Config
+# Current contract-aligned reference config
+
+global:
+  production_root: "c:\\3d-recon-pipeline\\outputs"
+  output_root: "d:\\agent_test\\outputs\\phase0"
+  unity_project: "C:\\Users\\User\\Downloads\\phase0\\Unity\\BendViewer"
+  decision_log: "outputs/phase0/phase0_decisions.log"
+  adaptive_threshold_window: 10
+
+dag:
+  name: phase0_map_establishment
+  description: "PointCloudValidator -> MapValidator -> UnityImporter -> RecoveryAdvisor -> PhaseReporter"
+
+  stages:
+    stage_0:
+      agent: PointCloudValidator
+      name: "SfM / Pointcloud Gate"
+      description: "讀取生產層 SfM/點雲報告，決定是否允許進入 3DGS。"
+
+      input:
+        report_json: "c:\\3d-recon-pipeline\\outputs\\reports\\pointcloud_validation_report.json"
+        signal_file: "c:\\3d-recon-pipeline\\outputs\\signals\\pointcloud_ready.json"
+
+      output:
+        validation_report: "outputs/phase0/pointcloud_validation_report.json"
+
+      event_on_pass: pointcloud_validated_ok
+      event_on_fail: pointcloud_validation_failed
+
+    stage_1:
+      agent: MapValidator
+      name: "3DGS 品質驗證"
+      description: "讀取 3DGS 訓練統計，檢查 PSNR / SSIM / LPIPS。"
+
+      depends_on:
+        - stage_0
+
+      condition:
+        type: "depends_on_event"
+        event: "pointcloud_validated_ok"
+        required: true
+
+      input:
+        stats_json: "c:\\3d-recon-pipeline\\outputs\\3DGS_models\\stats\\val_step29999.json"
+
+      output:
+        validation_report: "outputs/phase0/validation_report.json"
+
+      evaluation_rules:
+        mode: "adaptive"
+
+        static_thresholds:
+          psnr:
+            value: 20.0
+            operator: "gt"
+          ssim:
+            value: 0.80
+            operator: "gt"
+          lpips:
+            value: 0.15
+            operator: "lt"
+
+        adaptive_thresholds:
+          psnr:
+            base: 20.0
+            min: 14.0
+            max: 26.0
+          ssim:
+            base: 0.80
+            min: 0.68
+            max: 0.80
+          lpips:
+            base: 0.15
+            min: 0.12
+            max: 0.225
+
+        diagnostic_rules:
+          enabled: true
+          engine: "rules"
+          note: "目前使用 rules-based diagnostics，不再依賴 PyKnow / experta"
+
+      event_on_pass: validation_passed
+      event_on_fail: validation_failed
+      event_on_not_ready: training_not_ready
+
+    stage_2:
+      agent: UnityImporter
+      name: "Unity 場景整合"
+      description: "在 3DGS 品質通過後，若 PLY 與 Unity 專案就緒則執行匯入。"
+
+      depends_on:
+        - stage_1
+
+      condition:
+        type: "depends_on_event"
+        event: "validation_passed"
+        required: true
+
+      input:
+        ply_file: "c:\\3d-recon-pipeline\\outputs\\3DGS_models\\ply\\point_cloud_final.ply"
+        unity_project: "C:\\Users\\User\\Downloads\\phase0\\Unity\\BendViewer"
+
+      output:
+        import_summary: "outputs/phase0/import_summary.json"
+
+      event_on_success: import_completed
+      event_on_failure: import_failed
+      event_on_skipped: import_skipped
+
+    stage_3:
+      agent: RecoveryAdvisor
+      name: "恢復建議分類"
+      description: "分類目前阻塞點屬於上游資料、訓練執行、訓練品質或下游整合。"
+
+      depends_on:
+        - stage_0
+        - stage_1
+        - stage_2
+
+      condition:
+        type: "always_run"
+
+      input:
+        pointcloud_validation_report: "outputs/phase0/pointcloud_validation_report.json"
+        validation_report: "outputs/phase0/validation_report.json"
+        import_summary: "outputs/phase0/import_summary.json"
+
+      output:
+        recovery_advice: "outputs/phase0/recovery_advice.json"
+
+      event_on_completion: recovery_advice_ready
+
+    stage_4:
+      agent: PhaseReporter
+      name: "階段報告生成"
+      description: "聚合所有 stage 結果，輸出最終摘要。"
+
+      depends_on:
+        - stage_0
+        - stage_1
+        - stage_2
+        - stage_3
+
+      condition:
+        type: "always_run"
+
+      input:
+        pointcloud_validation_report: "outputs/phase0/pointcloud_validation_report.json"
+        validation_report: "outputs/phase0/validation_report.json"
+        import_summary: "outputs/phase0/import_summary.json"
+        recovery_advice: "outputs/phase0/recovery_advice.json"
+
+      output:
+        final_report: "outputs/phase0/PHASE0_FINAL_REPORT.md"
+        report_json: "outputs/phase0/phase0_report.json"
+
+      event_on_completion: phase0_complete
+
+event_flow:
+  pointcloud_validated_ok:
+    triggers: [stage_1]
+    description: "上游 SfM 報告允許進入 Stage 1。"
+
+  pointcloud_validation_failed:
+    triggers: [stage_3]
+    description: "上游 SfM 報告阻擋後續流程，直接產生總結。"
+
+  training_not_ready:
+    triggers: [stage_3]
+    description: "3DGS 訓練統計尚未就緒，直接產生等待中的總結。"
+
+  validation_passed:
+    triggers: [stage_2]
+    description: "地圖品質通過驗證，觸發匯入。"
+
+  validation_failed:
+    triggers: [stage_3]
+    description: "地圖品質未通過，跳過匯入，進入總結。"
+
+  import_completed:
+    triggers: [stage_3]
+    description: "匯入完成，進入最終報告。"
+
+  import_failed:
+    triggers: [stage_3]
+    description: "匯入失敗，但仍產生最終報告。"
+
+  import_skipped:
+    triggers: [stage_3]
+    description: "匯入條件不足，仍產生最終報告。"
+
+  recovery_advice_ready:
+    triggers: [stage_4]
+    description: "恢復建議已生成，進入最終報告。"
+
+  phase0_complete:
+    triggers: []
+    description: "Phase-0 流程終止。"
+
+audit:
+  enabled: true
+  log_file: "outputs/phase0/phase0_decisions.log"
+  log_format: "jsonl"
+  include_proposals: true
+  include_evaluations: true
+  include_action_reasons: true
+
+error_handling:
+  on_stage_0_error: "fail_to_stage_3"
+  on_stage_1_error: "fail_to_stage_3"
+  on_stage_2_error: "continue_to_stage_3"
+  on_stage_3_error: "log_and_exit"
+
+performance:
+  max_stage_timeout_seconds: 300
+  event_bus_poll_interval_ms: 100
+  log_verbose: false
+
+adaptive:
+  enabled: true
+  history_window: 10
+  trend_analysis: true
+  diagnosis_engine: "rules"
+  confidence_threshold: 0.70

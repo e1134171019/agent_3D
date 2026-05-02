@@ -1,0 +1,13 @@
+pipelines:
+  cuda_build:
+    enabled: true
+    config: pipelines/cuda_build/config.yaml
+  
+  torch_test:
+    enabled: true
+  
+  3dgs:
+    enabled: true
+    config: pipelines/3dgs/config.yaml
+
+default_pipeline: torch_test

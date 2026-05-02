@@ -1,0 +1,29 @@
+app:
+  name: Agent Project
+  version: 1.0
+  debug: false
+
+agents:
+  builder:
+    enabled: true
+    timeout: 300
+  
+  tester:
+    enabled: true
+    timeout: 300
+  
+  fixer:
+    enabled: true
+    timeout: 300
+  
+  analyzer:
+    enabled: true
+    timeout: 300
+
+logging:
+  level: INFO
+  format: "[%(asctime)s] %(levelname)s - %(message)s"
+  handlers:
+    - file: logs/build.log
+    - file: logs/test.log
+    - file: logs/error.log

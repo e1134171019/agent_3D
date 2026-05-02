@@ -1,0 +1,20 @@
+agents:
+  builder:
+    enabled: true
+    priority: 1
+    timeout: 600
+  
+  tester:
+    enabled: true
+    priority: 2
+    timeout: 300
+  
+  fixer:
+    enabled: true
+    priority: 3
+    timeout: 300
+  
+  analyzer:
+    enabled: true
+    priority: 4
+    timeout: 300
