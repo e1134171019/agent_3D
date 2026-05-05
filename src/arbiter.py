@@ -136,28 +136,87 @@ class Phase0Arbiter:
     ) -> str | None:
         if stage_name == "sfm":
             if can_proceed:
-                return "PCV-001"
-            return cls._candidate_for_layer(candidate_pool, dominant_layer, fallback="PCV-001")
+                return cls._candidate_by_id(candidate_pool, "PCV-001") or cls._best_ranked_candidate(
+                    candidate_pool,
+                    preferred_layer="data",
+                    fallback="PCV-001",
+                )
+            return cls._best_ranked_candidate(candidate_pool, preferred_layer=dominant_layer, fallback="PCV-001")
 
         if stage_name == "train":
             if can_proceed:
-                return "VAL-001" if validation_ready else cls._first_candidate_id(candidate_pool)
-            if validation_ready:
-                return cls._candidate_by_id(candidate_pool, "VAL-001") or cls._candidate_for_layer(
-                    candidate_pool,
-                    dominant_layer,
-                    fallback="VAL-001",
-                )
-            return cls._candidate_for_layer(candidate_pool, dominant_layer, fallback="REC-001")
+                if validation_ready:
+                    return cls._candidate_by_id(candidate_pool, "VAL-001") or cls._best_ranked_candidate(
+                        candidate_pool,
+                        preferred_layer="parameter",
+                        fallback="VAL-001",
+                    )
+                return cls._best_ranked_candidate(candidate_pool)
+            fallback = "REC-001"
+            if dominant_layer == "parameter" and validation_ready:
+                fallback = "VAL-001"
+            elif dominant_layer == "data":
+                fallback = "PCV-001"
+            return cls._best_ranked_candidate(
+                candidate_pool,
+                preferred_layer=dominant_layer,
+                fallback=fallback,
+            )
 
         if stage_name == "export":
             if can_proceed:
-                return cls._first_candidate_id(candidate_pool)
-            return cls._candidate_for_layer(candidate_pool, dominant_layer, fallback="REC-001")
+                return cls._best_ranked_candidate(candidate_pool)
+            fallback = "REC-001"
+            if dominant_layer == "parameter":
+                fallback = "PPG-001"
+            elif dominant_layer == "data":
+                fallback = "PCV-001"
+            return cls._best_ranked_candidate(
+                candidate_pool,
+                preferred_layer=dominant_layer,
+                fallback=fallback,
+            )
 
         if can_proceed:
-            return cls._first_candidate_id(candidate_pool)
-        return cls._candidate_for_layer(candidate_pool, dominant_layer)
+            return cls._best_ranked_candidate(candidate_pool)
+        return cls._best_ranked_candidate(candidate_pool, preferred_layer=dominant_layer)
+
+    @staticmethod
+    def _candidate_sort_key(item: dict[str, Any]) -> tuple[float, float]:
+        rank_score = item.get("rank_score", 0.0)
+        confidence = item.get("confidence", 0.0)
+        try:
+            rank_value = float(rank_score)
+        except (TypeError, ValueError):
+            rank_value = 0.0
+        try:
+            confidence_value = float(confidence)
+        except (TypeError, ValueError):
+            confidence_value = 0.0
+        return rank_value, confidence_value
+
+    @classmethod
+    def _best_ranked_candidate(
+        cls,
+        candidate_pool: dict[str, Any],
+        *,
+        preferred_layer: str | None = None,
+        fallback: str | None = None,
+    ) -> str | None:
+        ranked_candidates = sorted(
+            candidate_pool.get("candidates", []),
+            key=cls._candidate_sort_key,
+            reverse=True,
+        )
+        for item in ranked_candidates:
+            candidate_id = item.get("candidate_id")
+            if not candidate_id:
+                continue
+            if preferred_layer is None:
+                return candidate_id
+            if str(item.get("problem_layer", "")).strip() == preferred_layer:
+                return candidate_id
+        return fallback
 
     @staticmethod
     def _first_candidate_id(candidate_pool: dict[str, Any]) -> str | None:

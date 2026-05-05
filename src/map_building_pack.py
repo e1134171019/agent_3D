@@ -123,14 +123,22 @@ class MapBuildingPackRunner:
         proposal = agent.propose(str(pointcloud_report), str(validation_report))
         evaluation = agent.evaluate()
         result = agent.execute(str(self.coordinator.output_path))
-        event_name = "production_params_ready" if result.get("status") == "success" else "production_params_failed"
+        if result.get("status") != "success":
+            event_name = "production_params_failed"
+            action = "approved_with_fail"
+        elif evaluation.get("approved", False):
+            event_name = "production_params_ready"
+            action = "approved"
+        else:
+            event_name = "production_params_hold"
+            action = "approved_with_fail"
         self.coordinator.event_bus.emit(event_name)
         self.coordinator._append_decision(
             stage="ProductionParamGate",
             proposal_id=proposal.get("proposal_id", "PPG-001"),
             proposal_text=proposal.get("proposal_text", "生成 SfM / 3DGS 參數建議"),
             evaluation=evaluation,
-            action="approved" if result.get("status") == "success" else "approved_with_fail",
+            action=action,
             action_reason=evaluation.get("reason", "production_params_generated"),
             event_emitted=event_name,
             problem_layer="parameter",

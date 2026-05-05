@@ -186,8 +186,10 @@ class Phase0CandidatePoolBuilder:
             accepted_rate = float(history_signal.get("accepted_rate", 0.0) or 0.0)
             labeled_runs = int(history_signal.get("labeled_runs", 0) or 0)
             effectiveness_rate = float(history_signal.get("effectiveness_rate", 0.0) or 0.0)
+            repeat_error_rate = float(history_signal.get("repeat_error_rate", 0.0) or 0.0)
             history_score = effectiveness_rate if labeled_runs else accepted_rate
             score = (confidence * 0.55) + (history_score * 0.45)
+            score -= repeat_error_rate * 0.2
         if blocked_by:
             score -= 0.15
         return round(min(max(score, 0.0), 1.0), 4)

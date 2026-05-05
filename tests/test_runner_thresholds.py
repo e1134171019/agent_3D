@@ -140,6 +140,57 @@ class AdaptiveThresholdBranchTests(unittest.TestCase):
             )
             self.assertLessEqual(AdaptiveThreshold(str(high)).get_threshold("psnr", 20, max_threshold=25), 25)
 
+    def test_prefers_outcome_feedback_audit_root_before_legacy_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            write_json(
+                root / "run1" / "train_complete" / "outcome_feedback.json",
+                {
+                    "recorded_at": "2026-05-01T00:00:00",
+                    "outcome_status": "held_for_review",
+                    "decision_useful": True,
+                    "wasted_run": False,
+                    "critical_bad_release": False,
+                    "observed_metrics": {
+                        "contract_metrics": {"psnr": 21.0, "ssim": 0.81, "lpips": 0.14}
+                    },
+                },
+            )
+            write_json(
+                root / "run2" / "train_complete" / "outcome_feedback.json",
+                {
+                    "recorded_at": "2026-05-02T00:00:00",
+                    "outcome_status": "held_for_review",
+                    "decision_useful": True,
+                    "wasted_run": False,
+                    "critical_bad_release": False,
+                    "observed_metrics": {
+                        "contract_metrics": {"psnr": 22.0, "ssim": 0.82, "lpips": 0.13}
+                    },
+                },
+            )
+            write_json(
+                root / "run3" / "train_complete" / "outcome_feedback.json",
+                {
+                    "recorded_at": "2026-05-03T00:00:00",
+                    "outcome_status": "held_for_review",
+                    "decision_useful": False,
+                    "wasted_run": True,
+                    "critical_bad_release": False,
+                    "observed_metrics": {
+                        "contract_metrics": {"psnr": 10.0, "ssim": 0.40, "lpips": 0.50}
+                    },
+                },
+            )
+
+            threshold = AdaptiveThreshold(str(root / "phase0_decisions.log"), window=5)
+            self.assertEqual(threshold.history_source, "outcome_feedback")
+            self.assertEqual(len(threshold.history), 3)
+            self.assertGreater(threshold.get_threshold("psnr", 20.0), 20.0)
+            self.assertEqual(threshold.get_trend("psnr"), None)
+            self.assertEqual(threshold.learning_curve.get("overall", {}).get("decision_count"), 3)
+
 
 
 if __name__ == "__main__":

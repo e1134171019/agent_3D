@@ -188,6 +188,95 @@ class AgentCoreCoverageTests(unittest.TestCase):
             history = OutcomeFeedbackHistory(root).summarize_by_source_module()
             self.assertEqual(history["validation"]["accepted_runs"], 1)
 
+    def test_candidate_pool_penalizes_repeat_error_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            good_feedback_path = root / "good_run" / "train_complete" / "outcome_feedback.json"
+            bad_feedback_path = root / "bad_run" / "train_complete" / "outcome_feedback.json"
+            good_feedback_path.parent.mkdir(parents=True, exist_ok=True)
+            bad_feedback_path.parent.mkdir(parents=True, exist_ok=True)
+
+            good_feedback_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "feedback_id": "good-feedback",
+                        "decision_ref": "arbiter_decision.json",
+                        "run_id": "good-run",
+                        "outcome_status": "accepted",
+                        "observed_metrics": {},
+                        "observed_artifacts": {},
+                        "drift_vs_expectation": [],
+                        "lessons": [],
+                        "update_targets": [],
+                        "recorded_at": "2026-04-01T00:00:00",
+                        "selected_candidate_id": "GOOD-001",
+                        "selected_source_module": "GoodModule",
+                        "decision": "proceed",
+                        "can_proceed": True,
+                        "requires_human_review": False,
+                        "decision_useful": True,
+                        "problem_layer": "parameter",
+                        "repeated_problem": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            bad_feedback_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "feedback_id": "bad-feedback",
+                        "decision_ref": "arbiter_decision.json",
+                        "run_id": "bad-run",
+                        "outcome_status": "accepted",
+                        "observed_metrics": {},
+                        "observed_artifacts": {},
+                        "drift_vs_expectation": [],
+                        "lessons": [],
+                        "update_targets": [],
+                        "recorded_at": "2026-04-02T00:00:00",
+                        "selected_candidate_id": "BAD-001",
+                        "selected_source_module": "BadModule",
+                        "decision": "proceed",
+                        "can_proceed": True,
+                        "requires_human_review": False,
+                        "decision_useful": True,
+                        "problem_layer": "parameter",
+                        "repeated_problem": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            output_path = root / "new_run" / "train_complete" / "candidate_pool.json"
+            payload = Phase0CandidatePoolBuilder("run1", "train_complete").build(
+                decision_log=[
+                    {
+                        "stage": "GoodModule",
+                        "proposal_id": "GOOD-001",
+                        "proposal_text": "good candidate",
+                        "evaluation": {"confidence": "0.6", "decision_note": "good"},
+                        "action": "approved",
+                        "action_reason": "stable",
+                    },
+                    {
+                        "stage": "BadModule",
+                        "proposal_id": "BAD-001",
+                        "proposal_text": "bad candidate",
+                        "evaluation": {"confidence": "0.6", "decision_note": "bad"},
+                        "action": "approved",
+                        "action_reason": "stable",
+                    },
+                ],
+                output_path=output_path,
+            )
+
+            self.assertEqual(payload["candidate_count"], 2)
+            self.assertGreater(payload["candidates"][0]["rank_score"], payload["candidates"][1]["rank_score"])
+            self.assertEqual(payload["candidates"][0]["source_module"], "GoodModule")
+            self.assertEqual(payload["candidates"][1]["source_module"], "BadModule")
+
     def test_core_schema_validators_reject_malformed_decision_artifacts(self):
         with self.assertRaises(ContractValidationError):
             validate_candidate_pool(
@@ -324,10 +413,10 @@ class AgentCoreCoverageTests(unittest.TestCase):
             out.mkdir(parents=True, exist_ok=True)
             candidates = {
                 "candidates": [
-                    {"candidate_id": "PC-001", "problem_layer": "data"},
-                    {"candidate_id": "PPG-001", "source_module": "ProductionParamGate", "problem_layer": "parameter"},
-                    {"candidate_id": "VAL-001", "source_module": "MapValidator", "problem_layer": "parameter"},
-                    {"candidate_id": "REC-001", "problem_layer": "framework"},
+                    {"candidate_id": "VAL-001", "source_module": "MapValidator", "problem_layer": "parameter", "rank_score": 0.61},
+                    {"candidate_id": "PC-001", "problem_layer": "data", "rank_score": 0.93},
+                    {"candidate_id": "REC-001", "problem_layer": "framework", "rank_score": 0.52},
+                    {"candidate_id": "PPG-001", "source_module": "ProductionParamGate", "problem_layer": "parameter", "rank_score": 0.91},
                 ]
             }
 
@@ -361,13 +450,36 @@ class AgentCoreCoverageTests(unittest.TestCase):
             self.assertEqual(train_data["decision_context"]["history_signal"]["total_decisions"], 4)
             self.assertEqual(train_data["decision_context"]["history_signal"]["ai_exit_readiness_trend"]["direction"], "improving")
 
-            self.assertEqual(train_param["selected_candidate_id"], "VAL-001")
+            self.assertEqual(train_param["selected_candidate_id"], "PPG-001")
             self.assertEqual(train_param["next_action"]["type"], "review_training")
             self.assertIn("dominant_problem_layer=parameter", train_param["reason"])
 
             self.assertEqual(export_framework["decision"], "hold_phase_close")
             self.assertEqual(export_framework["selected_candidate_id"], "REC-001")
             self.assertEqual(export_framework["next_action"]["type"], "switch_strategy")
+
+    def test_arbiter_uses_rank_score_within_same_problem_layer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            candidates = {
+                "candidates": [
+                    {"candidate_id": "VAL-001", "source_module": "MapValidator", "problem_layer": "parameter", "rank_score": 0.62},
+                    {"candidate_id": "PPG-001", "source_module": "ProductionParamGate", "problem_layer": "parameter", "rank_score": 0.89},
+                    {"candidate_id": "REC-001", "source_module": "Recovery", "problem_layer": "framework", "rank_score": 0.95},
+                ]
+            }
+
+            decision = Phase0Arbiter("run1", "train_complete", "c.json", "root").decide(
+                current_state={"active_pack": "map_building", "context": {"problem_layer_signal": {"dominant_layer": "parameter"}}},
+                report_data={"validation_ready": True, "validation_pass": False, "recommendation": "quality issue"},
+                candidate_pool=candidates,
+                state_ref="state.json",
+                output_path=out / "ranked_train_hold.json",
+            )
+
+            self.assertEqual(decision["decision"], "hold_export")
+            self.assertEqual(decision["selected_candidate_id"], "PPG-001")
+            self.assertEqual(decision["next_action"]["type"], "review_training")
 
     def test_arbiter_decides_sfm_train_export_and_unknown_paths(self):
         with tempfile.TemporaryDirectory() as tmp:

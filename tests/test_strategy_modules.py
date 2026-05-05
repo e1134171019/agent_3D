@@ -30,16 +30,21 @@ class ProductionParamGateTests(unittest.TestCase):
             gate.propose(str(root / "missing_pc.json"), str(root / "missing_val.json"))
             self.assertEqual(gate.sfm_plan["profile_name"], "hold_missing_upstream")
             self.assertEqual(gate.train_plan["profile_name"], "hold_until_sfm_pass")
+            self.assertFalse(gate.evaluate()["approved"])
 
             pc_pass = write_json(root / "pc_pass.json", {"can_proceed_to_3dgs": True})
             gate = ProductionParamGate()
             gate.propose(str(pc_pass), str(root / "missing_val.json"))
             self.assertEqual(gate.train_plan["profile_name"], "train_completion")
+            self.assertTrue(gate.evaluate()["approved"])
+            self.assertEqual(gate.decision["gate_status"], "rerun_train")
 
             validation_pass = write_json(root / "val_pass.json", {"overall_pass": True})
             gate = ProductionParamGate()
             gate.propose(str(pc_pass), str(validation_pass))
             self.assertEqual(gate.train_plan["profile_name"], "hold_current_train")
+            self.assertFalse(gate.evaluate()["approved"])
+            self.assertEqual(gate.decision["gate_status"], "hold_manual_review")
 
             pc_fail = write_json(
                 root / "pc_fail.json",
@@ -54,6 +59,8 @@ class ProductionParamGateTests(unittest.TestCase):
             gate.propose(str(pc_fail), str(root / "missing_val.json"))
             self.assertEqual(gate.sfm_plan["recommended_params"]["max_features"], 16000)
             self.assertEqual(gate.sfm_plan["recommended_params"]["seq_overlap"], 15)
+            self.assertTrue(gate.evaluate()["approved"])
+            self.assertEqual(gate.decision["gate_status"], "rerun_sfm")
 
             for action, expected in [
                 ("retrain", "quality_recovery"),

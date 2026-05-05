@@ -160,14 +160,38 @@ class ProductionParamGate:
         }
 
     def evaluate(self) -> dict:
+        sfm_actionable = self._is_actionable_plan(self.sfm_plan)
+        train_actionable = self._is_actionable_plan(self.train_plan)
+
+        if sfm_actionable and train_actionable:
+            gate_status = "rerun_sfm_and_train"
+            reason = "actionable_sfm_and_train_plans_generated"
+        elif sfm_actionable:
+            gate_status = "rerun_sfm"
+            reason = "actionable_sfm_plan_generated"
+        elif train_actionable:
+            gate_status = "rerun_train"
+            reason = "actionable_train_plan_generated"
+        else:
+            gate_status = "hold_manual_review"
+            reason = "no_actionable_rerun_plan"
+
         self.decision = {
             "evaluation_timestamp": datetime.now().isoformat(),
-            "approved": True,
-            "reason": "production_param_plans_generated",
+            "approved": sfm_actionable or train_actionable,
+            "overall_pass": sfm_actionable or train_actionable,
+            "gate_status": gate_status,
+            "reason": reason,
             "sfm_profile": self.sfm_plan.get("profile_name") if self.sfm_plan else "unknown",
             "train_profile": self.train_plan.get("profile_name") if self.train_plan else "unknown",
         }
         return self.decision
+
+    @staticmethod
+    def _is_actionable_plan(plan: dict[str, Any] | None) -> bool:
+        if not plan:
+            return False
+        return bool(plan.get("execution_policy") == "orchestrated_rerun" and plan.get("recommended_params"))
 
     def execute(self, output_dir: str) -> dict:
         out_dir = Path(output_dir)

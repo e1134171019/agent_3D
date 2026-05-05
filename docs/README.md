@@ -14,6 +14,7 @@
 - `src/phase0_runner.py`、`run_phase0.py`：entry / watch / launcher
 - `agents/phase0/*`：map-building strategy pack
 - `agents/quality/*`：quality strategy pack
+- `adapters/pytorch_decision_model.py`：離線 PyTorch 學習器，從 `outcome_feedback.json` 訓練 `decision_useful` 分類器
 - `outputs/*`：審計與覆蓋率報告
 - `archive/*`：歷史封存，不作正式升級依據
 
@@ -32,7 +33,14 @@
 - `coordinator.py` 每輪寫出 `outcome_feedback.json` 後，會同步產生 `learning_curve.json`。
 - `outcome_feedback.json` 現在包含 preliminary outcome label：`decision_useful`、`human_override`、`wasted_run`、`repeated_problem`、`critical_bad_release`、`token_cost_estimate`。
 - `candidate_pool.py` 會讀取歷史 feedback；若已有人工或後續結果標籤，優先使用 `effectiveness_rate`，否則退回 `accepted_rate` 影響 `rank_score`。
+- `adapters/adaptive_threshold.py` 現在優先使用正式 `outcome_feedback` 歷史計算品質閾值，`learning_curve` 作為同一 audit root 的學習摘要；只有缺少正式 feedback 時才回退舊 `phase0_decisions.log`。
+- `arbiter.py` 的 hold-path 會正式吃 `rank_score`；若同一 `problem_layer` 有多個候選，現在會選分數較高者，而不是固定回傳單一候選 ID。
+- `ProductionParamGate` 已不再是永遠 `approved=true` 的假 gate；現在只有在 `sfm_plan` 或 `train_plan` 真的產生可執行 rerun 參數時才會 `approved=true`，否則回 `hold_manual_review`。
+- `ProductionParamGate.evaluate()` 會回傳 `gate_status / reason / sfm_profile / train_profile`。正式 gate status 目前包含：`rerun_sfm_and_train`、`rerun_sfm`、`rerun_train`、`hold_manual_review`。
+- `map_building_pack.py` 對應輸出事件現在分為 `production_params_ready`、`production_params_hold`、`production_params_failed`；`production_params_hold` 代表「有判斷但沒有可執行 rerun plan」，不是執行錯誤。
 - `learning_curve.json` 用於判斷對話框 AI 是否可從 meta-evaluator 降為 observer-only；目前未達標，因 latest train/export replay 都仍是 `held_for_review` 且尚未標籤。
+- `adapters/pytorch_decision_model.py` 是目前第一個 ML probe：它把 `outcome_feedback` 轉成結構化特徵，離線預測 `decision_useful`。目前只允許當離線學習器 / advisory model，不直接改寫正式 `arbiter`。
+- 2026-05-05 實測：`outputs/phase0` 下共 `9` 筆 feedback、其中 `8` 筆可訓練，離線訓練 accuracy 直接達到 `1.0`，代表目前樣本太少、過擬合風險高；不得把這個模型直接升格為正式裁決器。
 ## Outcome Label CLI（2026-05-01）
 - 人工標籤不得手改 JSON；必須使用 `run_phase0.py --label-feedback <outcome_feedback.json>`。
 - 可標記欄位：`--decision-useful`、`--metrics-improved`、`--problem-layer-correct`、`--human-override`、`--wasted-run`、`--repeated-problem`、`--critical-bad-release`。
@@ -46,6 +54,6 @@
 - 保留：PointCloudValidator、MapValidator、ProductionParamGate。停用後會改 selected candidate、dominant layer 或正式問題判斷。
 - 刪除：UnityParamGate、UnityImporter。停用後 latest sfm/train/export 的正式 decision / next_action / selected candidate / dominant layer 不產生必要改善；production 端也未讀取 decision-layer 的 unity_export_params.json 或 import_summary.json 作正式接口。
 - 已修正：coordinator 會在 pack 未寫出 phase0_report.json 時，依 pack_result、validation_report 與 decision_log 生成正式 phase0_report.json，再交給 current_state / arbiter / shared decision 使用。
-- 驗證：2026-05-01 replay latest train/export 後，train = hold_export + selected VAL-001 + dominant parameter；export = hold_phase_close + selected PPG-001 + dominant parameter。
+- 驗證：2026-05-05 replay latest train/export 後，train = hold_export + selected PPG-001 + dominant parameter；export = hold_phase_close + selected PPG-001 + dominant parameter。
 - 已整理：ArtifactResolver 統一 contract artifact alias / fallback；Phase0ReportGenerator 統一 phase0_report 生成規則。兩者仍留在 coordinator.py 內，不新增核心檔，避免 6-core 膨脹。
 - 已整理：ProblemLayerAnalyzer 統一 problem_layer 單筆推斷與 candidate aggregation；candidate_pool.py 負責單一規則來源，current_state.py 只消費聚合結果。
