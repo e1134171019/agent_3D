@@ -40,6 +40,6 @@
 
 ## 詳細規格與最新變更
 
-完整 6-core 結構規格、ablation 紀錄、Learning Curve 閉環、Outcome Label CLI、Offline Teacher / Dataset Layer 規則請見 [`AGENT_SYSTEM_V1.md`](AGENT_SYSTEM_V1.md)。
-
-Offline learning 資料 schema 請見 [`DECISION_DATASET_SCHEMA.md`](DECISION_DATASET_SCHEMA.md)。
+- [`AGENT_SYSTEM_V1.md`](AGENT_SYSTEM_V1.md)：6-core + pack 結構**正式規格**（不含 dated change）
+- [`CHANGELOG.md`](CHANGELOG.md)：ablation 紀錄、Learning Curve 閉環、Outcome Label CLI、Offline Teacher 規則、Runtime Consistency 修正等所有 dated changes
+- [`DECISION_DATASET_SCHEMA.md`](DECISION_DATASET_SCHEMA.md)：offline learning 資料 schema
