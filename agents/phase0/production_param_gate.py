@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from src.contract_io import read_json
+
 
 class ProductionParamGate:
     """根據目前驗證結果，輸出可被生產層腳本讀取的參數建議。"""
@@ -25,8 +27,7 @@ class ProductionParamGate:
         file_path = Path(path)
         if not file_path.exists():
             return None
-        with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        return read_json(file_path, expect_object=True)
 
     def propose(self, pointcloud_report_path: str, validation_report_path: str) -> dict:
         self.pointcloud_report = self._read_json_if_exists(pointcloud_report_path)
@@ -162,6 +163,9 @@ class ProductionParamGate:
     def evaluate(self) -> dict:
         sfm_actionable = self._is_actionable_plan(self.sfm_plan)
         train_actionable = self._is_actionable_plan(self.train_plan)
+        rerun_actionable = sfm_actionable or train_actionable
+        sfm_stage_passed = bool(self.pointcloud_report and self.pointcloud_report.get("can_proceed_to_3dgs", False))
+        train_stage_passed = bool(self.validation_report and self.validation_report.get("overall_pass", False))
 
         if sfm_actionable and train_actionable:
             gate_status = "rerun_sfm_and_train"
@@ -178,8 +182,11 @@ class ProductionParamGate:
 
         self.decision = {
             "evaluation_timestamp": datetime.now().isoformat(),
-            "approved": sfm_actionable or train_actionable,
-            "overall_pass": sfm_actionable or train_actionable,
+            "approved": rerun_actionable,
+            "overall_pass": rerun_actionable,
+            "rerun_actionable": rerun_actionable,
+            "sfm_stage_passed": sfm_stage_passed,
+            "train_stage_passed": train_stage_passed,
             "gate_status": gate_status,
             "reason": reason,
             "sfm_profile": self.sfm_plan.get("profile_name") if self.sfm_plan else "unknown",

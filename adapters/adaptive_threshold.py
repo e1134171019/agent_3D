@@ -169,9 +169,16 @@ class AdaptiveThreshold:
         if max_threshold is not None:
             dynamic = min(dynamic, max_threshold)
         
-        # 防止偏離基礎閾值太遠（最多 ± 50%）
-        lower_bound = base * 0.5
-        upper_bound = base * 1.5
+        # 防止通用 API 偏離基礎閾值太遠；正式 gate 仍可用 min/max 再收緊。
+        if metric in ["ssim"]:
+            lower_bound = base * 0.85
+            upper_bound = min(base * 1.05, 1.0)
+        elif metric in ["lpips"]:
+            lower_bound = base * 0.8
+            upper_bound = base * 1.5
+        else:
+            lower_bound = base * 0.7
+            upper_bound = base * 1.3
         dynamic = max(lower_bound, min(dynamic, upper_bound))
         
         return dynamic
@@ -245,17 +252,10 @@ class AdaptiveThreshold:
         
         if abs(avg_diff) < 0.01:  # 變化不到 1%
             return "stable"
-        elif avg_diff > 0:
-            # PSNR/SSIM 上升，LPIPS 下降 = improving（取決於指標方向）
-            if metric in ["lpips"]:
-                return "declining" if avg_diff > 0 else "improving"
-            else:
-                return "improving"
-        else:
-            if metric in ["lpips"]:
-                return "improving" if avg_diff < 0 else "declining"
-            else:
-                return "declining"
+
+        if metric in ["lpips"]:
+            return "improving" if avg_diff < 0 else "declining"
+        return "improving" if avg_diff > 0 else "declining"
     
     def recommend_action(self, metric: str, value: float, base_threshold: float) -> str:
         """

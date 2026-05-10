@@ -22,6 +22,7 @@ from typing import Optional, Dict
 # 導入改進模塊
 from adapters.adaptive_threshold import AdaptiveThreshold
 from agents.phase0.map_diagnostics import run_diagnosis, DiagnosisResult
+from src.contract_io import read_json
 
 
 @dataclass
@@ -75,8 +76,7 @@ class MapValidator:
             }
         """
         try:
-            with open(stats_json_path, 'r') as f:
-                stats = json.load(f)
+            stats = read_json(stats_json_path, expect_object=True)
             
             self.metrics = ValidationMetrics(
                 psnr=stats.get('psnr', 0),
@@ -94,7 +94,12 @@ class MapValidator:
                 ssim=self.metrics.ssim,
                 lpips=self.metrics.lpips,
                 history_stats=history_stats,
-                training_stats=training_stats
+                training_stats=training_stats,
+                thresholds={
+                    "psnr": ValidationMetrics.PASS_PSNR,
+                    "ssim": ValidationMetrics.PASS_SSIM,
+                    "lpips": ValidationMetrics.PASS_LPIPS,
+                },
             )
             
             self.proposal = {
@@ -126,22 +131,24 @@ class MapValidator:
     def _analyze_history(self) -> Optional[Dict]:
         """從歷史日誌中分析過去的決策和趨勢"""
         try:
-            recent_metrics = self.adaptive_threshold._extract_recent_successful_metrics("psnr")
+            recent_psnr = self.adaptive_threshold._extract_recent_successful_metrics("psnr")
+            recent_ssim = self.adaptive_threshold._extract_recent_successful_metrics("ssim")
+            recent_lpips = self.adaptive_threshold._extract_recent_successful_metrics("lpips")
             
-            if len(recent_metrics) < 2:
+            if not any(len(values) >= 2 for values in (recent_psnr, recent_ssim, recent_lpips)):
                 return None
             
-            avg_psnr = sum(recent_metrics) / len(recent_metrics)
-            psnr_trend = self.adaptive_threshold.get_trend("psnr") or "unknown"
-            
+            def _avg(values):
+                return sum(values) / len(values) if values else 0
+
             return {
                 "total_runs": len(self.adaptive_threshold.history),
-                "avg_psnr": avg_psnr,
-                "psnr_trend": psnr_trend,
-                "avg_ssim": 0,  # 可擴展
-                "avg_lpips": 0,
-                "ssim_trend": "unknown",
-                "lpips_trend": "unknown"
+                "avg_psnr": _avg(recent_psnr),
+                "psnr_trend": self.adaptive_threshold.get_trend("psnr") or "unknown",
+                "avg_ssim": _avg(recent_ssim),
+                "avg_lpips": _avg(recent_lpips),
+                "ssim_trend": self.adaptive_threshold.get_trend("ssim") or "unknown",
+                "lpips_trend": self.adaptive_threshold.get_trend("lpips") or "unknown",
             }
         except Exception:
             return None
@@ -228,14 +235,19 @@ class MapValidator:
         # 根據診斷調整最終決策
         basic_pass = all(rule["pass"] for rule in rules)
         
-        # 如果診斷建議 "retrain"，即使指標達標也要重新訓練
-        if self.diagnosis and self.diagnosis.action == "retrain":
+        diagnosis_override_applied = False
+        diagnosis_confidence = self.diagnosis.confidence if self.diagnosis else 0.0
+        strong_diagnosis = diagnosis_confidence >= 0.80
+
+        # 只有高信心診斷才能覆寫基本品質規則，避免弱診斷永久鎖住 train gate。
+        if self.diagnosis and self.diagnosis.action == "retrain" and strong_diagnosis:
             overall_pass = False
             decision_note = f"診斷建議：{self.diagnosis.reason} → 需要重新訓練"
-        # 如果診斷建議 "investigate"，標記為待檢查
-        elif self.diagnosis and self.diagnosis.action == "investigate":
-            overall_pass = basic_pass and False  # 強制失敗以進入診斷模式
+            diagnosis_override_applied = True
+        elif self.diagnosis and self.diagnosis.action == "investigate" and strong_diagnosis:
+            overall_pass = basic_pass
             decision_note = f"診斷建議：{self.diagnosis.reason} → 需要手動檢查"
+            diagnosis_override_applied = not basic_pass
         else:
             overall_pass = basic_pass
             decision_note = "根據自適應閾值進行評估"
@@ -251,6 +263,7 @@ class MapValidator:
             "rules": rules,
             "overall_pass": overall_pass,
             "quality_score": quality_score,
+            "diagnosis_override_applied": diagnosis_override_applied,
             "adaptive_thresholds": {
                 "psnr": adaptive_psnr,
                 "ssim": adaptive_ssim,

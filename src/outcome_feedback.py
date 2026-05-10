@@ -328,7 +328,11 @@ class Phase0OutcomeFeedbackBuilder:
         dominant_problem_layer = self._dominant_problem_layer(current_state)
         problem_layer = selected_problem_layer or dominant_problem_layer
         token_cost_estimate = self._token_cost_estimate(candidate_pool, arbiter_decision, report_data)
-        decision_useful = True if can_proceed else None
+        decision_useful = self._preliminary_decision_useful(
+            can_proceed=can_proceed,
+            report_data=report_data,
+            arbiter_decision=arbiter_decision,
+        )
 
         payload = {
             "schema_version": 1,
@@ -457,6 +461,36 @@ class Phase0OutcomeFeedbackBuilder:
             return ["current_state_review", "experiment_history", "learning_curve"]
         return ["current_state_review", "experiment_history", "learning_curve", "human_label"]
 
+    def _preliminary_decision_useful(
+        self,
+        *,
+        can_proceed: bool,
+        report_data: dict[str, Any],
+        arbiter_decision: dict[str, Any],
+    ) -> bool | None:
+        if can_proceed:
+            return True
+
+        decision = str(arbiter_decision.get("decision", ""))
+        stage_name = self._shared_stage_name()
+        if stage_name == "sfm" and decision == "hold_train" and report_data.get("pointcloud_pass") is False:
+            return True
+        if (
+            stage_name == "train"
+            and decision == "hold_export"
+            and report_data.get("validation_ready") is True
+            and report_data.get("validation_pass") is False
+        ):
+            return True
+        if (
+            stage_name == "export"
+            and decision == "hold_phase_close"
+            and "import_success" in report_data
+            and report_data.get("import_success") is False
+        ):
+            return True
+        return None
+
     @staticmethod
     def _token_cost_estimate(
         candidate_pool: dict[str, Any],
@@ -480,4 +514,3 @@ class Phase0OutcomeFeedbackBuilder:
             "label_status": payload.get("label_status"),
             "label_source": payload.get("label_source"),
         }
-

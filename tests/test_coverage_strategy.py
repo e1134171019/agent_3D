@@ -71,6 +71,7 @@ class CoverageStrategyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = {module: file_entry(90.0) for module in CoverageStrategy().formal_modules}
+            files[r"D:\workspace\3d-recon-pipeline\src\train_3dgs.py"] = file_entry(92.0)
             report = write_coverage(root / "coverage.json", files)
 
             result = CoverageStrategy().analyze(report)

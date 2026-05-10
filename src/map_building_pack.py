@@ -95,7 +95,8 @@ class MapBuildingPackRunner:
             )
             return False
 
-        agent = MapValidator(log_path=str(self.coordinator.output_path / "phase0_decisions.log"))
+        history_root = getattr(self.coordinator, "output_root", self.coordinator.output_path)
+        agent = MapValidator(log_path=str(history_root))
         proposal = agent.propose(str(self.coordinator.training_stats_path))
         evaluation = agent.evaluate()
         result = agent.execute(str(self.coordinator.output_path / "validation_report.json"))

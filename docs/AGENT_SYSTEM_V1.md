@@ -60,3 +60,23 @@
 - 驗證：2026-05-05 replay latest train/export 後，train = hold_export + selected PPG-001 + dominant parameter；export = hold_phase_close + selected PPG-001 + dominant parameter。
 - 已整理：ArtifactResolver 統一 contract artifact alias / fallback；Phase0ReportGenerator 統一 phase0_report 生成規則。兩者仍留在 coordinator.py 內，不新增核心檔，避免 6-core 膨脹。
 - 已整理：ProblemLayerAnalyzer 統一 problem_layer 單筆推斷與 candidate aggregation；candidate_pool.py 負責單一規則來源，current_state.py 只消費聚合結果。
+
+## Offline Teacher / Dataset Layer（2026-05-06）
+- 正式 6-core runtime 不變。
+- 本機 Ollama / Qwen 只作 teacher / labeler / explainer，不直接參與正式 arbiter runtime。
+- 歷史 run 回填與 teacher 輸出格式，統一以 `docs/DECISION_DATASET_SCHEMA.md` 為準。
+- `tests/test_pytorch_decision_model.py` 僅允許 deterministic mocked teacher 輸出；不得在測試內直接呼叫 Ollama 或要求下載 Qwen / TabPFN 套件。
+- 真正的離線學習入口是 `adapters/train_teacher_augmented_baseline.py` 或後續 trainer，不是 `tests/test_pytorch_decision_model.py`。
+- offline learner 讀到 `issue_type` 時，必須先顯式投影回 formal `problem_layer` 空間；teacher `confidence` 只作 sample weight，不得偷渡成 formal runtime 決策欄位。
+- offline learner 不允許把 teacher `run_useful` 直接當輸入特徵；該欄位只屬於 run-level supervision，不屬於 feature space。
+- historical backfill 轉 base vector 時，runtime-style bool 必須做保守推導，避免整排固定 `0.0` 造成資訊真空。
+- 對話框 AI 角色是 meta evaluator / reviewer：審查 teacher prompt、schema、feature 與模型報告，不直接取代 formal runtime。
+
+## Offline Teacher / Dataset Layer
+- `adapters/build_historical_run_backfill.py`：建立第一批 `historical_run_backfill_seed.jsonl`，只回填已完成且已有正式結論的 run。
+- `adapters/label_historical_backfill_with_ollama.py`：使用本機 `Ollama/Qwen` 為 seed records 產生 teacher JSON，不進 formal runtime。
+- `adapters/train_teacher_augmented_baseline.py`：正式 offline trainer，負責吸收 backfill + teacher labels；不得直接改寫 `latest_*_decision.json`。
+- `outputs/offline_learning/`：離線學習資料層，與 `outputs/phase0` 正式 feedback 分離。
+
+
+

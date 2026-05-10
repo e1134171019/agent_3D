@@ -84,6 +84,9 @@ class CoordinatorIntegrationTests(unittest.TestCase):
             contract_stage="train_complete",
             contract_status="completed",
             shared_stage_name="train",
+            artifacts={},
+            metrics={},
+            params={},
             pack_result={"pointcloud_ready": True},
             validation_report={"overall_pass": False},
             validation_ready=True,
@@ -94,6 +97,9 @@ class CoordinatorIntegrationTests(unittest.TestCase):
             contract_stage="sfm_complete",
             contract_status="completed",
             shared_stage_name="sfm",
+            artifacts={},
+            metrics={},
+            params={},
             pack_result={"pointcloud_ready": True},
             validation_report={},
             validation_ready=False,
@@ -106,6 +112,26 @@ class CoordinatorIntegrationTests(unittest.TestCase):
         self.assertFalse(train_report["validation_pass"])
         self.assertEqual(sfm_report["recommendation"], "proceed_to_train")
         self.assertEqual(sfm_report["next_steps"], ["start_3dgs_training"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ply = Path(tmp) / "point_cloud_unity.ply"
+            ply.write_bytes(b"ply\n")
+            export_report = Phase0ReportGenerator.generate(
+                run_id="run3",
+                contract_stage="export_complete",
+                contract_status="completed",
+                shared_stage_name="export",
+                artifacts={"ply_file": str(ply)},
+                metrics={},
+                params={"unity": True},
+                pack_result={},
+                validation_report={},
+                validation_ready=False,
+                decision_log_count=1,
+            )
+        self.assertTrue(export_report["import_success"])
+        self.assertEqual(export_report["import_success_source"], "completed_unity_ply_artifact")
+        self.assertEqual(export_report["recommendation"], "export_verified")
 
     def test_coordinator_writes_core_audit_and_shared_decision(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -248,6 +274,58 @@ class CoordinatorIntegrationTests(unittest.TestCase):
             self.assertFalse(report["validation_pass"])
             self.assertEqual(report["recommendation"], "hold_export")
             self.assertEqual(report["next_steps"], ["review_training_quality"])
+
+    def test_coordinator_replaces_stale_pack_report_for_different_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            production = root / "prod"
+            events = production / "outputs" / "agent_events"
+            decisions = production / "outputs" / "agent_decisions"
+            output = root / "agent_outputs"
+            run_root = root / "run"
+            contract_path = events / "latest_train_complete.json"
+            events.mkdir(parents=True)
+            write_json(
+                contract_path,
+                {
+                    "schema_version": 1,
+                    "timestamp": "2026-04-26T00:00:00",
+                    "run_id": "fresh-run",
+                    "stage": "train_complete",
+                    "status": "completed",
+                    "run_root": str(run_root),
+                    "artifacts": {},
+                    "metrics": {},
+                    "params": {},
+                },
+            )
+
+            def fake_run(pack_runner):
+                coord = pack_runner.coordinator
+                write_json(
+                    coord.output_path / "phase0_report.json",
+                    {
+                        "run_id": "old-run",
+                        "contract_stage": "export_complete",
+                        "recommendation": "stale",
+                    },
+                )
+                return {"pointcloud_ready": True, "validation_ready": False}
+
+            with mock.patch("src.map_building_pack.MapBuildingPackRunner.run", fake_run):
+                result = Phase0Coordinator(
+                    production_path=str(production),
+                    events_root=str(events),
+                    output_root=str(output),
+                    contract_path=str(contract_path),
+                    decisions_root=str(decisions),
+                ).run()
+
+            out_dir = Path(result["output_root"])
+            report = json.loads(Path(result["report_json"]).read_text(encoding="utf-8"))
+            self.assertEqual(report["run_id"], "fresh-run")
+            self.assertEqual(report["contract_stage"], "train_complete")
+            self.assertTrue(list(out_dir.glob("phase0_report__stale_*.json")))
 
 
 class MapBuildingPackIntegrationTests(unittest.TestCase):

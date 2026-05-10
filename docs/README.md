@@ -57,3 +57,36 @@
 - 驗證：2026-05-05 replay latest train/export 後，train = hold_export + selected PPG-001 + dominant parameter；export = hold_phase_close + selected PPG-001 + dominant parameter。
 - 已整理：ArtifactResolver 統一 contract artifact alias / fallback；Phase0ReportGenerator 統一 phase0_report 生成規則。兩者仍留在 coordinator.py 內，不新增核心檔，避免 6-core 膨脹。
 - 已整理：ProblemLayerAnalyzer 統一 problem_layer 單筆推斷與 candidate aggregation；candidate_pool.py 負責單一規則來源，current_state.py 只消費聚合結果。
+
+## Offline Teacher / Dataset Layer（2026-05-06）
+- `docs/DECISION_DATASET_SCHEMA.md`：歷史 run 回填 schema 與 Qwen teacher output schema。
+- `adapters/qwen_teacher.py`：本機 Ollama / Qwen teacher adapter，只做語意標註，不進正式 runtime。
+- `adapters/historical_run_backfill.py`：run-level backfill schema，供歷史實驗回填與 teacher prompt 使用。
+- `tests/test_pytorch_decision_model.py` 只測 deterministic feature merge；不直接呼叫本機 Ollama。
+
+## Offline Learning 分層規則（2026-05-09）
+- `Ollama / Qwen` 的正式角色是 **teacher / labeler / explainer**，不是 formal runtime arbiter。
+- `PyTorch` 的正式角色是 **offline trainer**；真正學習在 `adapters/train_teacher_augmented_baseline.py` 或後續 trainer 進行，不在 `tests/test_pytorch_decision_model.py` 內進行。
+- `tests/test_pytorch_decision_model.py` 只負責：
+  - schema 驗證
+  - feature merge 驗證
+  - mocked teacher output 驗證
+  - baseline train/predict 介面 sanity check
+- `outputs/offline_learning/*` 是 teacher / learner / backfill 的唯一正式落點；不得把其輸出直接視為 `latest_*_decision.json`。
+- 對話框 AI 只做 meta review：
+  - 審查 teacher prompt 與標註品質
+  - 審查 offline model 是否 leakage / overfit
+  - 審查哪些 sandbox probe 值得升下一輪
+
+
+## Offline Teacher / Dataset Layer
+- `adapters/build_historical_run_backfill.py`：建立第一批 `historical_run_backfill_seed.jsonl`，只回填已完成且已有正式結論的 run。
+- `adapters/label_historical_backfill_with_ollama.py`：使用本機 `Ollama/Qwen` 為 seed records 產生 teacher JSON，不進 formal runtime。
+- `outputs/offline_learning/`：離線學習資料層，與 `outputs/phase0` 正式 feedback 分離。
+- `adapters/pytorch_decision_model.py`：歷史 backfill 會先把 `issue_type` 顯式投影回 formal `problem_layer` 空間；teacher `confidence` 現在主要作為 offline training 的 sample weight，而不是主要輸入特徵。
+- `adapters/pytorch_decision_model.py`：teacher `run_useful` 不得直接進 teacher feature vector；run-level supervision 與 feature space 要分離，避免 offline learner 偷讀 target。
+- `adapters/pytorch_decision_model.py`：historical backfill 的 6 個 runtime-style bool 會做保守推導，不再全部硬填 `0.0`。
+- `probe_context`：historical backfill 現在允許攜帶 framework-specific sandbox 上下文；目前第一個用途是 `Scaffold-GS`。
+- `adapters/build_scaffold_probe_backfill.py`：把 `C:\3d-recon-pipeline\experimental\scaffold_gs_probe` 的 manifest / outputs 轉成離線 seed records。
+- `adapters/label_historical_backfill_with_ollama.py`：現在會把 `probe_context` 一起送進本機 `Ollama/Qwen`，讓 teacher 能辨識 `prepared` / `trained` / `setup_blocked` 的框架 probe 狀態。
+

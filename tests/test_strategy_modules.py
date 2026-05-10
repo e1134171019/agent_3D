@@ -38,6 +38,9 @@ class ProductionParamGateTests(unittest.TestCase):
             self.assertEqual(gate.train_plan["profile_name"], "train_completion")
             self.assertTrue(gate.evaluate()["approved"])
             self.assertEqual(gate.decision["gate_status"], "rerun_train")
+            self.assertTrue(gate.decision["sfm_stage_passed"])
+            self.assertFalse(gate.decision["train_stage_passed"])
+            self.assertTrue(gate.decision["rerun_actionable"])
 
             validation_pass = write_json(root / "val_pass.json", {"overall_pass": True})
             gate = ProductionParamGate()
@@ -45,6 +48,9 @@ class ProductionParamGateTests(unittest.TestCase):
             self.assertEqual(gate.train_plan["profile_name"], "hold_current_train")
             self.assertFalse(gate.evaluate()["approved"])
             self.assertEqual(gate.decision["gate_status"], "hold_manual_review")
+            self.assertTrue(gate.decision["sfm_stage_passed"])
+            self.assertTrue(gate.decision["train_stage_passed"])
+            self.assertFalse(gate.decision["rerun_actionable"])
 
             pc_fail = write_json(
                 root / "pc_fail.json",

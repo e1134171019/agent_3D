@@ -152,8 +152,11 @@ class Phase0Runner:
                     key = str(contract_file.resolve())
                     if seen.get(key) == mtime_ns:
                         continue
-                    self.execute_single(contract_path=contract_file)
                     seen[key] = mtime_ns
+                    try:
+                        self.execute_single(contract_path=contract_file)
+                    except Exception as exc:
+                        print(f"[WARN] contract failed and will not be retried until it changes: {contract_file} ({exc})")
             except KeyboardInterrupt:
                 print("\nWatch mode stopped")
                 return

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import re
 from typing import Any
 
 from src.contract_io import validate_candidate_pool, write_json
@@ -23,8 +24,8 @@ class ProblemLayerAnalyzer:
             return explicit
         return cls.infer(entry, evaluation)
 
-    @staticmethod
-    def infer(entry: dict[str, Any], evaluation: dict[str, Any]) -> str:
+    @classmethod
+    def infer(cls, entry: dict[str, Any], evaluation: dict[str, Any]) -> str:
         source = str(entry.get("stage", "")).lower()
         text_parts = [
             source,
@@ -44,20 +45,30 @@ class ProblemLayerAnalyzer:
             "opacity",
             "cap_max",
             "antialiased",
+            "min_opacity",
+            "regularization",
+            "learning_rate",
+            "training_stats",
+            "quality",
             "psnr",
             "ssim",
             "lpips",
-            "train",
         )
         framework_keywords = ("unity", "import", "export", "recovery", "strategy", "mcmc", "glomap", "lightglue", "framework")
 
-        if any(keyword in text for keyword in data_keywords):
+        if any(cls._contains_keyword(text, keyword) for keyword in data_keywords):
             return "data"
-        if any(keyword in text for keyword in parameter_keywords):
+        if any(cls._contains_keyword(text, keyword) for keyword in parameter_keywords):
             return "parameter"
-        if any(keyword in text for keyword in framework_keywords):
+        if any(cls._contains_keyword(text, keyword) for keyword in framework_keywords):
             return "framework"
         return "framework"
+
+    @staticmethod
+    def _contains_keyword(text: str, keyword: str) -> bool:
+        if "_" in keyword:
+            return keyword in text
+        return re.search(rf"\b{re.escape(keyword)}\b", text) is not None
 
     @classmethod
     def aggregate(cls, candidates: list[dict[str, Any]]) -> dict[str, Any]:
@@ -187,9 +198,11 @@ class Phase0CandidatePoolBuilder:
             labeled_runs = int(history_signal.get("labeled_runs", 0) or 0)
             effectiveness_rate = float(history_signal.get("effectiveness_rate", 0.0) or 0.0)
             repeat_error_rate = float(history_signal.get("repeat_error_rate", 0.0) or 0.0)
+            wasted_run_rate = float(history_signal.get("wasted_run_rate", 0.0) or 0.0)
             history_score = effectiveness_rate if labeled_runs else accepted_rate
             score = (confidence * 0.55) + (history_score * 0.45)
-            score -= repeat_error_rate * 0.2
+            score -= repeat_error_rate * 0.45
+            score -= wasted_run_rate * 0.20
         if blocked_by:
             score -= 0.15
         return round(min(max(score, 0.0), 1.0), 4)
@@ -228,6 +241,4 @@ class Phase0CandidatePoolBuilder:
         except (TypeError, ValueError):
             pass
         return 0.5
-
-
 

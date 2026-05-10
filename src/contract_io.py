@@ -171,16 +171,23 @@ def _require_non_empty_string_fields(
 def read_json(path: str | Path, *, expect_object: bool = True) -> Any:
     """Read JSON with the encodings used by Windows-side production artifacts."""
     path = Path(path)
-    last_error: Exception | None = None
+    last_decode_error: UnicodeDecodeError | None = None
     for encoding in JSON_ENCODINGS:
         try:
             payload = json.loads(path.read_text(encoding=encoding))
             if expect_object and not isinstance(payload, dict):
                 raise ContractValidationError(f"JSON root must be an object: {path}")
             return payload
-        except Exception as exc:
-            last_error = exc
-    raise last_error if last_error is not None else ValueError(f"Unable to parse JSON: {path}")
+        except UnicodeDecodeError as exc:
+            last_decode_error = exc
+            continue
+        except json.JSONDecodeError as exc:
+            if encoding == "utf-8" and "UTF-8 BOM" in str(exc):
+                continue
+            raise ContractValidationError(f"Invalid JSON syntax in {path}: {exc}") from exc
+    if last_decode_error is not None:
+        raise ContractValidationError(f"Unable to decode JSON file {path}: {last_decode_error}") from last_decode_error
+    raise ContractValidationError(f"Unable to parse JSON: {path}")
 
 
 def write_json(path: str | Path, payload: Any) -> Path:

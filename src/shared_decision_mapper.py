@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from src.contract_io import validate_shared_decision
@@ -32,6 +33,7 @@ class Phase0SharedDecisionMapper:
         report_data: dict[str, Any],
         arbiter_decision: dict[str, Any],
         reports: dict[str, str],
+        source_path: str | Path = "",
     ) -> dict[str, Any]:
         pointcloud_pass = bool(report_data.get("pointcloud_pass", False))
         validation_ready = bool(report_data.get("validation_ready", False))
@@ -78,7 +80,7 @@ class Phase0SharedDecisionMapper:
             },
             "reports": reports,
         }
-        return validate_shared_decision(payload)
+        return validate_shared_decision(payload, source_path=source_path)
 
     @staticmethod
     def _decision_gate(stage_name: str) -> str:

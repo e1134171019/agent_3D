@@ -14,6 +14,12 @@ from dataclasses import dataclass
 from typing import List, Optional, Dict
 from datetime import datetime
 
+DEFAULT_THRESHOLDS = {
+    "psnr": 20.0,
+    "ssim": 0.80,
+    "lpips": 0.15,
+}
+
 
 @dataclass
 class DiagnosisResult:
@@ -44,7 +50,8 @@ class MapDiagnostics:
         ssim: float,
         lpips: float,
         history_stats: Optional[Dict] = None,
-        training_stats: Optional[Dict] = None
+        training_stats: Optional[Dict] = None,
+        thresholds: Optional[Dict] = None,
     ) -> DiagnosisResult:
         """
         執行診斷推理
@@ -59,8 +66,13 @@ class MapDiagnostics:
         Returns:
             DiagnosisResult: 診斷結果
         """
+        thresholds = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+        pass_psnr = float(thresholds["psnr"])
+        pass_ssim = float(thresholds["ssim"])
+        pass_lpips = float(thresholds["lpips"])
+
         # 規則 1: 所有指標都達標
-        if psnr > 20 and ssim > 0.80 and lpips < 0.15:
+        if psnr > pass_psnr and ssim > pass_ssim and lpips < pass_lpips:
             return DiagnosisResult(
                 diagnosis="quality_acceptable",
                 confidence=0.95,
@@ -85,7 +97,7 @@ class MapDiagnostics:
             return DiagnosisResult(
                 diagnosis="sparse_gaussians",
                 confidence=0.80,
-                action="diagnose",
+                action="investigate",
                 reason="SfM 點雲可能過於稀疏，導致 PSNR 低。檢查 COLMAP 點數 > 50000",
                 details={"check_item": "points3D.bin size", "expected_points": 50000}
             )
@@ -112,7 +124,7 @@ class MapDiagnostics:
                 return DiagnosisResult(
                     diagnosis="plateau_reached",
                     confidence=0.85,
-                    action="diagnose",
+                    action="investigate",
                     reason="多次訓練指標已平台，需要調整超參數或檢查 SfM 品質",
                     details={"suggest_check": ["learning_rate", "gsplat_sh_degree", "colmap_point_cloud"]}
                 )
@@ -128,13 +140,13 @@ class MapDiagnostics:
             )
         
         # 規則 7: 一般性不達標提示
-        if psnr < 20 or ssim < 0.80 or lpips > 0.15:
+        if psnr < pass_psnr or ssim < pass_ssim or lpips > pass_lpips:
             issue = []
-            if psnr < 20:
+            if psnr < pass_psnr:
                 issue.append(f"PSNR 低 ({psnr:.1f})")
-            if ssim < 0.80:
+            if ssim < pass_ssim:
                 issue.append(f"SSIM 低 ({ssim:.2f})")
-            if lpips > 0.15:
+            if lpips > pass_lpips:
                 issue.append(f"LPIPS 高 ({lpips:.3f})")
             
             return DiagnosisResult(
@@ -160,7 +172,8 @@ def run_diagnosis(
     ssim: float,
     lpips: float,
     history_stats: Optional[Dict] = None,
-    training_stats: Optional[Dict] = None
+    training_stats: Optional[Dict] = None,
+    thresholds: Optional[Dict] = None,
 ) -> DiagnosisResult:
     """
     快速診斷接口（保持與舊 API 兼容）
@@ -176,5 +189,5 @@ def run_diagnosis(
         DiagnosisResult: 診斷結果
     """
     diagnostics = MapDiagnostics()
-    return diagnostics.diagnose(psnr, ssim, lpips, history_stats, training_stats)
+    return diagnostics.diagnose(psnr, ssim, lpips, history_stats, training_stats, thresholds)
 

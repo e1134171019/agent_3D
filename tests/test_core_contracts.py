@@ -48,6 +48,14 @@ class AgentCoreCoverageTests(unittest.TestCase):
             "parameter",
         )
         self.assertEqual(
+            ProblemLayerAnalyzer.resolve({"stage": "train_complete"}, {"reason": "needs human review"}),
+            "framework",
+        )
+        self.assertEqual(
+            ProblemLayerAnalyzer.resolve({"stage": "MapValidator"}, {"reason": "training_stats_missing"}),
+            "parameter",
+        )
+        self.assertEqual(
             ProblemLayerAnalyzer.resolve({"stage": "StrategyRouter"}, {"reason": "switch MCMC strategy"}),
             "framework",
         )
@@ -264,7 +272,7 @@ class AgentCoreCoverageTests(unittest.TestCase):
                         "stage": "BadModule",
                         "proposal_id": "BAD-001",
                         "proposal_text": "bad candidate",
-                        "evaluation": {"confidence": "0.6", "decision_note": "bad"},
+                        "evaluation": {"confidence": "1.0", "decision_note": "bad"},
                         "action": "approved",
                         "action_reason": "stable",
                     },
@@ -593,6 +601,18 @@ class AgentCoreCoverageTests(unittest.TestCase):
                 shared_decision_path="latest_export_decision.json",
                 output_path=Path(tmp) / "run2" / "export_complete" / "outcome_feedback.json",
             )
+            held_gate = builder.build(
+                report_data={"import_success": False},
+                candidate_pool={"candidate_count": 1, "candidates": []},
+                current_state={},
+                arbiter_decision={
+                    "can_proceed": False,
+                    "requires_human_review": True,
+                    "decision": "hold_phase_close",
+                },
+                shared_decision_path="latest_export_decision.json",
+                output_path=Path(tmp) / "run3" / "export_complete" / "outcome_feedback.json",
+            )
 
             self.assertEqual(accepted["outcome_status"], "accepted")
             self.assertIn("experiment_history", accepted["update_targets"])
@@ -605,16 +625,17 @@ class AgentCoreCoverageTests(unittest.TestCase):
             self.assertGreater(accepted["token_cost_estimate"], 0)
             self.assertEqual(held["outcome_status"], "held_for_review")
             self.assertIsNone(held["decision_useful"])
+            self.assertIs(held_gate["decision_useful"], True)
             self.assertIn("human_label", held["update_targets"])
             self.assertEqual(held["lessons"], ["2 candidates evaluated"])
             history = OutcomeFeedbackHistory(Path(tmp))
             curve_path = Path(tmp) / "learning_curve.json"
             curve = history.write_learning_curve(curve_path)
             self.assertTrue(curve_path.exists())
-            self.assertEqual(curve["total_decisions"], 2)
-            self.assertEqual(curve["overall"]["labeled_decision_count"], 1)
+            self.assertEqual(curve["total_decisions"], 3)
+            self.assertEqual(curve["overall"]["labeled_decision_count"], 2)
             self.assertIn("ai_exit_readiness_trend", curve)
-            self.assertEqual(curve["ai_exit_readiness_trend"]["window_size"], 2)
+            self.assertEqual(curve["ai_exit_readiness_trend"]["window_size"], 3)
             self.assertFalse(curve["ai_exit_readiness"]["ready_for_ai_observer_mode"])
 
             labeled = history.apply_label(
@@ -633,10 +654,10 @@ class AgentCoreCoverageTests(unittest.TestCase):
             self.assertFalse(labeled["decision_useful"])
             self.assertTrue(labeled["outcome_label"]["human_override"])
             curve = history.write_learning_curve(curve_path)
-            self.assertEqual(curve["overall"]["labeled_decision_count"], 2)
-            self.assertEqual(curve["overall"]["recommendation_success_rate"], 0.5)
-            self.assertEqual(curve["overall"]["human_override_rate"], 0.5)
-            self.assertEqual(curve["overall"]["repeat_error_rate"], 0.5)
+            self.assertEqual(curve["overall"]["labeled_decision_count"], 3)
+            self.assertEqual(curve["overall"]["recommendation_success_rate"], 0.6667)
+            self.assertEqual(curve["overall"]["human_override_rate"], 0.3333)
+            self.assertEqual(curve["overall"]["repeat_error_rate"], 0.3333)
 
     def test_phase0_runner_reads_json_and_picks_latest_contract(self):
         with tempfile.TemporaryDirectory() as tmp:

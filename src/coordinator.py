@@ -111,6 +111,9 @@ class Phase0ReportGenerator:
         contract_stage: str,
         contract_status: str,
         shared_stage_name: str,
+        artifacts: dict[str, Any],
+        metrics: dict[str, Any],
+        params: dict[str, Any],
         pack_result: dict[str, Any],
         validation_report: dict[str, Any],
         validation_ready: bool,
@@ -118,7 +121,14 @@ class Phase0ReportGenerator:
     ) -> dict[str, Any]:
         pointcloud_pass = bool(pack_result.get("pointcloud_ready", False))
         validation_pass = bool(validation_report.get("overall_pass", False))
-        import_success = False
+        import_success, import_success_source = Phase0ReportGenerator._infer_import_success(
+            shared_stage_name=shared_stage_name,
+            contract_status=contract_status,
+            artifacts=artifacts,
+            metrics=metrics,
+            params=params,
+            pack_result=pack_result,
+        )
         recommendation, next_steps = Phase0ReportGenerator._recommend(
             shared_stage_name=shared_stage_name,
             pointcloud_pass=pointcloud_pass,
@@ -134,6 +144,7 @@ class Phase0ReportGenerator:
             "validation_ready": validation_ready,
             "validation_pass": validation_pass,
             "import_success": import_success,
+            "import_success_source": import_success_source,
             "recommendation": recommendation,
             "next_steps": next_steps,
             "pack_result": pack_result,
@@ -164,6 +175,46 @@ class Phase0ReportGenerator:
         if validation_pass:
             return "proceed", ["review_current_stage"]
         return "hold", ["review_current_stage"]
+
+    @staticmethod
+    def _infer_import_success(
+        *,
+        shared_stage_name: str,
+        contract_status: str,
+        artifacts: dict[str, Any],
+        metrics: dict[str, Any],
+        params: dict[str, Any],
+        pack_result: dict[str, Any],
+    ) -> tuple[bool, str]:
+        explicit_keys = (
+            "import_success",
+            "unity_import_success",
+            "unity_asset_created",
+            "export_success",
+        )
+        for source_name, source in (
+            ("pack_result", pack_result),
+            ("metrics", metrics),
+            ("params", params),
+            ("artifacts", artifacts),
+        ):
+            for key in explicit_keys:
+                if isinstance(source.get(key), bool):
+                    return bool(source[key]), f"{source_name}.{key}"
+
+        if shared_stage_name != "export":
+            return False, "not_export_stage"
+
+        ply_file = artifacts.get("ply_file") or artifacts.get("ply")
+        if (
+            str(contract_status).lower() in {"completed", "success", "succeeded"}
+            and bool(params.get("unity", False))
+            and ply_file
+            and Path(ply_file).exists()
+        ):
+            return True, "completed_unity_ply_artifact"
+
+        return False, "missing_unity_ply_artifact"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -229,7 +280,8 @@ class Phase0Coordinator:
         self.run_root = Path(self.contract.get("run_root")) if self.contract.get("run_root") else self.production_path
         self.output_path = self.output_root / _safe_slug(self.run_id) / _safe_slug(self.contract_stage)
         if self.output_path.exists():
-            shutil.rmtree(self.output_path)
+            archive_name = f"{self.output_path.name}__previous_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+            shutil.move(str(self.output_path), str(self.output_path.with_name(archive_name)))
         self.output_path.mkdir(parents=True, exist_ok=True)
         self.decisions_root.mkdir(parents=True, exist_ok=True)
         self.unity_project_path = Path(unity_project_path) if unity_project_path else None
@@ -295,7 +347,11 @@ class Phase0Coordinator:
     def _load_or_write_phase0_report(self, pack_result: dict[str, Any]) -> dict[str, Any]:
         report_path = self.output_path / "phase0_report.json"
         if report_path.exists():
-            return _read_json(report_path)
+            existing_report = _read_json(report_path)
+            if self._phase0_report_matches_contract(existing_report):
+                return existing_report
+            stale_path = self.output_path / f"phase0_report__stale_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json"
+            shutil.move(str(report_path), str(stale_path))
 
         validation_report_path = self.output_path / "validation_report.json"
         validation_report = _read_json(validation_report_path) if validation_report_path.exists() else {}
@@ -305,6 +361,9 @@ class Phase0Coordinator:
             contract_stage=self.contract_stage,
             contract_status=self.contract_status,
             shared_stage_name=self._shared_stage_name(),
+            artifacts=self.artifacts,
+            metrics=self.metrics,
+            params=self.params,
             pack_result=pack_result,
             validation_report=validation_report,
             validation_ready=validation_ready,
@@ -312,6 +371,17 @@ class Phase0Coordinator:
         )
         write_json(report_path, payload)
         return payload
+
+    def _phase0_report_matches_contract(self, report_data: dict[str, Any]) -> bool:
+        if not isinstance(report_data, dict):
+            return False
+        run_id = report_data.get("run_id")
+        contract_stage = report_data.get("contract_stage")
+        if run_id and str(run_id) != str(self.run_id):
+            return False
+        if contract_stage and str(contract_stage) != str(self.contract_stage):
+            return False
+        return True
 
     def _write_candidate_pool(self) -> dict[str, Any]:
         from src.candidate_pool import Phase0CandidatePoolBuilder
@@ -380,14 +450,15 @@ class Phase0Coordinator:
                 "recovery_advice": str(self.output_path / "recovery_advice.json"),
                 "observability_json": str(self.output_path / "observability.json"),
             },
+            source_path=self.output_path / "shared_decision_payload.json",
         )
         payload["timestamp"] = datetime.now().isoformat()
 
-        payload = validate_shared_decision(payload, source_path=self.decisions_root)
         stage_name = payload["decision_stage"]
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         decision_file = self.decisions_root / f"{timestamp}_{stage_name}_decision.json"
         latest_file = self.decisions_root / f"latest_{stage_name}_decision.json"
+        payload = validate_shared_decision(payload, source_path=latest_file)
         write_json(decision_file, payload)
         write_json(latest_file, payload)
         return latest_file
@@ -399,7 +470,7 @@ class Phase0Coordinator:
         current_state: dict[str, Any],
         arbiter_decision: dict[str, Any],
         shared_decision_path: Path,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         from src.outcome_feedback import Phase0OutcomeFeedbackBuilder
 
         builder = Phase0OutcomeFeedbackBuilder(
@@ -576,9 +647,4 @@ class Phase0Coordinator:
             "observability_json": str(self.output_path / "observability.json"),
             "shared_decision": str(shared_decision),
         }
-
-
-
-
-
 

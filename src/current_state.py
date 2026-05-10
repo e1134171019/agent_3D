@@ -45,11 +45,7 @@ class Phase0CurrentStateBuilder:
             "allowed_actions": self._allowed_actions(),
             "blocked_actions": self._blocked_actions(),
             "blacklist": [],
-            "source_docs": [
-                r"C:\3d-recon-pipeline\AI代理作業守則.md",
-                r"C:\3d-recon-pipeline\專案願景與當前狀態.md",
-                self.source_contract,
-            ],
+            "source_docs": self._source_docs(),
             "updated_at": datetime.now().isoformat(),
             "context": {
                 "run_id": self.run_id,
@@ -91,6 +87,27 @@ class Phase0CurrentStateBuilder:
         if stage_name == "export":
             return ["proceed_to_train"]
         return []
+
+    def _source_docs(self) -> list[str]:
+        production_root = self._infer_production_root()
+        return [
+            str(production_root / "AI代理作業守則.md"),
+            str(production_root / "專案願景與當前狀態.md"),
+            self.source_contract,
+        ]
+
+    def _infer_production_root(self) -> Path:
+        for raw_path in (self.source_contract, self.run_root):
+            try:
+                path = Path(raw_path).resolve()
+            except (OSError, RuntimeError):
+                path = Path(raw_path)
+            for candidate in (path, *path.parents):
+                if candidate.name.lower() == "outputs":
+                    return candidate.parent
+                if (candidate / "文件導航.md").exists():
+                    return candidate
+        return Path(self.source_contract).resolve().parent
 
     @staticmethod
     def _problem_layer_signal(candidate_pool: dict[str, Any]) -> dict[str, Any]:

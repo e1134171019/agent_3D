@@ -206,7 +206,12 @@ class CoverageStrategy:
 
     @staticmethod
     def _normalize_path(path: str) -> str:
-        return path.replace("\\", "/").lstrip("./")
+        normalized = path.replace("\\", "/")
+        if "/src/" in normalized:
+            return "src/" + normalized.split("/src/", 1)[1]
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        return normalized
 
     @staticmethod
     def _percent(summary: dict[str, Any]) -> float:
