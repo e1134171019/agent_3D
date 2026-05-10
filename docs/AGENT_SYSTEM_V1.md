@@ -1,6 +1,24 @@
 # Agent System V1
 
+> 角色：本檔案為決策層 6-core + pack 結構的**正式規格**與**所有歷史變更（changelog）的單一來源**。
+> 入口檔（`/.instructions.md`、`docs/README.md`）只保留最小指引並引用本檔案，不再內聯 ablation / Learning Curve / Outcome Label CLI / Offline Teacher 等規則。
+
 目前 `D:\agent_test` 採用「6-core + pack」結構。
+
+## 章節索引
+
+- §正式核心（6）
+- §非核心需通過 ablation 才能保留
+- §清理原則
+- §Problem Layer Signal（2026-04-30）
+- §Ablation 刪除結果（2026-05-01）
+- §Learning Curve 閉環（2026-05-01）
+- §Outcome Label CLI（2026-05-01）
+- §2026-05-01 第二輪 stage ablation
+- §Offline Teacher / Dataset Layer（2026-05-06）
+- §Offline Teacher / Dataset Layer（細節）
+- §Offline Learning 分層規則（2026-05-09）
+- §Runtime Consistency 修正（2026-05-10）
 
 ## 正式核心（6）
 1. `contract_io.py`
@@ -78,5 +96,22 @@
 - `adapters/train_teacher_augmented_baseline.py`：正式 offline trainer，負責吸收 backfill + teacher labels；不得直接改寫 `latest_*_decision.json`。
 - `outputs/offline_learning/`：離線學習資料層，與 `outputs/phase0` 正式 feedback 分離。
 
+## Offline Learning 分層規則（2026-05-09）
+- `adapters/pytorch_decision_model.py`：歷史 backfill 會先把 `issue_type` 顯式投影回 formal `problem_layer` 空間；teacher `confidence` 現在主要作為 offline training 的 sample weight，而不是主要輸入特徵。
+- `adapters/pytorch_decision_model.py`：teacher `run_useful` 不得直接進 teacher feature vector；run-level supervision 與 feature space 要分離，避免 offline learner 偷讀 target。
+- `adapters/pytorch_decision_model.py`：historical backfill 的 6 個 runtime-style bool 會做保守推導，不再全部硬填 `0.0`。
+- `probe_context`：historical backfill 現在允許攜帶 framework-specific sandbox 上下文；目前第一個用途是 `Scaffold-GS`。
+- `adapters/build_scaffold_probe_backfill.py`：把 `C:\3d-recon-pipeline\experimental\scaffold_gs_probe` 的 manifest / outputs 轉成離線 seed records。
+- `adapters/label_historical_backfill_with_ollama.py`：現在會把 `probe_context` 一起送進本機 `Ollama/Qwen`，讓 teacher 能辨識 `prepared` / `trained` / `setup_blocked` 的框架 probe 狀態。
+
+## Runtime Consistency 修正（2026-05-10）
+- `AdaptiveThreshold.get_trend()` 的 LPIPS 方向已固定：LPIPS 下降才是 `improving`，上升是 `declining`；不得再用與 PSNR/SSIM 相同方向判讀。
+- `AdaptiveThreshold.get_threshold()` 的通用上下界改為依 metric 收斂；正式 gate 仍以 `MapValidator.evaluate()` 傳入的 min/max 為最終保護。
+- `MapDiagnostics` 必須吃與 `ValidationMetrics` 對齊的 threshold，不得另行硬編碼一份品質門檻。
+- `MapValidator._analyze_history()` 必須同時計算 PSNR/SSIM/LPIPS trend；不得讓 `ssim_trend` / `lpips_trend` 永久固定為 `unknown`。
+- `MapValidator` / `ProductionParamGate` 讀正式 JSON 時必須走 `src.contract_io.read_json`，不得手寫 raw `open()+json.load()` 當主要入口。
+- `ProductionParamGate.evaluate()` 保留既有 `approved/overall_pass` 相容語義，但新增 `rerun_actionable / sfm_stage_passed / train_stage_passed`，避免把「有 rerun plan」誤解成「stage 健康」。
+- `Ollama/Qwen` teacher 標註必須可續跑；單筆 teacher 失敗只能標記該筆 `qwen_teacher_error`，不得中斷整批資料回填。
+- `CoverageStrategy._normalize_path()` 不得使用 `lstrip("./")` 處理路徑；絕對路徑必須正規化回正式 `src/...` 模組名後再比對。
 
 
