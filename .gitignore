@@ -19,3 +19,23 @@ _tmp*
 .idea/
 Thumbs.db
 Desktop.ini
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/
+
+# Generated data / runtime outputs
+data/
+outputs/
+.tmp_test_workspace/
+
+# Local heavy artifacts
+*.pt
+*.pth
+*.ckpt
+*.ply
+*.splat
+*.mp4
+*.avi

@@ -92,6 +92,7 @@ def main() -> None:
     parser.add_argument("--model", default="qwen2.5:14b")
     parser.add_argument("--base-url", default="http://127.0.0.1:11434")
     parser.add_argument("--no-resume", action="store_true", help="Do not reuse labels already present in the output file.")
+    parser.add_argument("--refresh-null-scaffold", action="store_true", help="Relabel scaffold rows (trained/reviewed/setup_blocked) so teacher semantics stay consistent after policy changes.")
     args = parser.parse_args()
 
     teacher = LocalOllamaTeacher(model=args.model, base_url=args.base_url)
@@ -104,9 +105,19 @@ def main() -> None:
     for index, record in enumerate(records, start=1):
         run_id = str(record.get("run_id"))
         if run_id in existing_by_run_id:
-            labeled.append(existing_by_run_id[run_id])
-            print(f"[SKIP] reused {index}/{len(records)} :: {record.get('run_id')}")
-            continue
+            existing = existing_by_run_id[run_id]
+            teacher_labels = existing.get("teacher_labels", {}) or {}
+            probe_context = record.get("probe_context", {}) or {}
+            should_refresh_null_scaffold = (
+                args.refresh_null_scaffold
+                and str(probe_context.get("framework_name", "")).lower() == "scaffold_gs"
+                and str(probe_context.get("probe_status", "unknown")) in {"trained", "reviewed", "setup_blocked"}
+            )
+            if not should_refresh_null_scaffold:
+                labeled.append(existing)
+                print(f"[SKIP] reused {index}/{len(records)} :: {record.get('run_id')}")
+                continue
+            print(f"[REFRESH] relabel {index}/{len(records)} :: {record.get('run_id')}")
         summary = build_teacher_summary(record)
         try:
             teacher_label = teacher.classify_run(summary)

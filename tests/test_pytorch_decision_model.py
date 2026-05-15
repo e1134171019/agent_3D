@@ -112,6 +112,7 @@ class PyTorchDecisionModelTests(unittest.TestCase):
         batch = build_training_batch([labeled, unlabeled])
         self.assertEqual(batch.size, 1)
         self.assertEqual(batch.feature_dim, feature_vector_dim())
+        self.assertEqual(feature_vector_dim(), 28)
 
     def test_augmented_feature_vector_with_mock_teacher(self):
         record = make_record(useful=True, psnr=24.0, lpips=0.18, source="MapValidator", layer="parameter")
@@ -125,6 +126,7 @@ class PyTorchDecisionModelTests(unittest.TestCase):
 
         vector = build_augmented_feature_vector(record, teacher)
         self.assertEqual(len(vector), augmented_feature_vector_dim())
+        self.assertEqual(augmented_feature_vector_dim(), 44)
         role_end = len(RUN_ROLE_VOCAB)
         issue_end = role_end + len(ISSUE_TYPE_VOCAB)
         unity_end = issue_end + len(UNITY_RESULT_VOCAB)
@@ -161,8 +163,9 @@ class PyTorchDecisionModelTests(unittest.TestCase):
 
         vector = build_augmented_feature_vector(record, teacher)
         self.assertEqual(len(vector), augmented_feature_vector_dim())
+        self.assertEqual(augmented_feature_vector_dim(), 44)
 
-    def test_backfill_feature_vector_accepts_scaffold_probe_context(self):
+    def test_backfill_feature_vector_ignores_scaffold_probe_context(self):
         record = make_backfill_record(
             useful=False,
             role="failed_probe",
@@ -171,15 +174,14 @@ class PyTorchDecisionModelTests(unittest.TestCase):
             psnr=0.0,
             lpips=0.0,
         )
+        plain_vector = build_backfill_feature_vector(record)
         record["probe_context"] = {
             "framework_name": "scaffold_gs",
             "probe_status": "trained",
         }
-
-        vector = build_backfill_feature_vector(record)
-        self.assertEqual(len(vector), feature_vector_dim())
-        self.assertEqual(sum(vector[-8:-5]), 1.0)
-        self.assertEqual(sum(vector[-5:]), 1.0)
+        contextual_vector = build_backfill_feature_vector(record)
+        self.assertEqual(len(contextual_vector), feature_vector_dim())
+        self.assertEqual(plain_vector, contextual_vector)
 
     def test_train_and_predict_probability(self):
         records = [

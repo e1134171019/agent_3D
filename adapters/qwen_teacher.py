@@ -53,6 +53,90 @@ def _clamp_confidence(value: Any) -> float:
     return max(0.0, min(1.0, score))
 
 
+def _summary_metric(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _apply_scaffold_probe_fallback(label: QwenTeacherLabel, run_summary: dict[str, Any]) -> QwenTeacherLabel:
+    context_payload = run_summary.get("probe_context", {})
+    context = context_payload if isinstance(context_payload, dict) else {}
+    if str(context.get("framework_name", "")).lower() != "scaffold_gs":
+        return label.normalized()
+
+    status = str(context.get("probe_status", "unknown"))
+    has_metrics = any(_summary_metric(run_summary.get(key)) is not None for key in ("psnr", "ssim", "lpips", "num_gs"))
+
+    run_useful = label.run_useful
+    role = label.role
+    issue_type = label.issue_type
+    failure_reason = label.failure_reason
+    next_recommendation = label.next_recommendation
+    unity_result = label.unity_result if label.unity_result != "unknown" else "not_tested"
+    confidence = label.confidence
+    rationale = label.rationale
+
+    if status == "setup_blocked":
+        run_useful = False
+        if role == "unknown":
+            role = "failed_probe"
+        if issue_type == "unknown":
+            issue_type = "framework"
+        if not failure_reason:
+            failure_reason = "Scaffold-GS probe did not produce complete training artifacts."
+        if not next_recommendation:
+            next_recommendation = "Fix the Scaffold-GS sandbox/runtime issue before comparing framework quality."
+        if not rationale:
+            rationale = failure_reason
+        confidence = max(confidence, 0.55)
+    elif status in ("trained", "reviewed") and has_metrics:
+        if issue_type == "unknown":
+            issue_type = "framework"
+        unity_is_positive = unity_result in ("candidate", "pass")
+        unity_is_negative = unity_result == "visual_fail"
+        if unity_is_positive:
+            run_useful = True
+            if role == "unknown":
+                role = "unity_candidate"
+            if not next_recommendation:
+                next_recommendation = "Promote this Scaffold-GS probe into bridge-aware comparison against the current gsplat Unity candidate."
+            if not rationale:
+                rationale = "Scaffold-GS probe passed Unity-side review, so it can contribute a positive usefulness label."
+        elif unity_is_negative:
+            run_useful = False
+            if role == "unknown":
+                role = "failed_probe"
+            if not failure_reason:
+                failure_reason = "Scaffold-GS probe finished training, but Unity deployment review failed."
+            if not next_recommendation:
+                next_recommendation = "Keep the Scaffold-GS run as a failed probe until bridge or rendering quality improves."
+            if not rationale:
+                rationale = failure_reason
+        else:
+            run_useful = None
+            if role == "unknown":
+                role = "unknown"
+            if not next_recommendation:
+                next_recommendation = "Wait for Unity deployment review before assigning a definitive usefulness label to this Scaffold-GS probe."
+            if not rationale:
+                rationale = "Completed Scaffold-GS training alone is not enough; usefulness stays pending until Unity deployment review finishes."
+        confidence = max(confidence, 0.55)
+
+    normalized = QwenTeacherLabel(
+        run_useful=run_useful,
+        role=role,
+        issue_type=issue_type,
+        failure_reason=failure_reason,
+        next_recommendation=next_recommendation,
+        unity_result=unity_result,
+        confidence=confidence,
+        rationale=rationale,
+    ).normalized()
+    return normalized
+
+
 def teacher_output_schema() -> dict[str, Any]:
     return {
         "run_useful": "bool | null",
@@ -86,8 +170,9 @@ def build_run_prompt(run_summary: dict[str, Any]) -> str:
         "5. 上游路線顯著差於 U_base + MCMC，issue_type 可判為 data 或 parameter，但不要留 unknown。\n"
         "6. 若 probe_context.framework_name=scaffold_gs，代表這是新框架 sandbox probe，不要把它當正式主線 benchmark。\n"
         "7. 若 probe_context.probe_status=prepared，代表只有 sandbox 與資料已就緒、尚未完成訓練；此時 run_useful 應為 null，role 應為 unknown，unity_result 通常為 not_tested。\n"
-        "8. 若 probe_context.probe_status=setup_blocked，代表環境或編譯阻塞；role 通常是 failed_probe，issue_type 優先 framework，不要誤判成 parameter。\n"
-        "9. 若 scaffold_gs 已產出 point_cloud 或 results.json，但 Unity 尚未驗證，優先視為 framework probe；只有在摘要明確指出可回到 Unity chain 時才考慮 unity_candidate。\n"
+        "8. 若 probe_context.probe_status=setup_blocked，代表環境或編譯阻塞；role 通常是 failed_probe，issue_type 優先 framework，run_useful 優先 false，不要誤判成 parameter。\n"
+        "9. 若 scaffold_gs 已產出 point_cloud 或 results.json，代表 probe_status=trained；但若尚未完成 Unity deployment review，run_useful 應優先回傳 null，而不是直接判 true。\n"
+        "10. 只有 scaffold_gs 已完成 Unity review 且 unity_result=candidate/pass 時，才可判 useful=true；若 unity_result=visual_fail，應判 useful=false。\n"
         "輸出格式必須精確符合：\n"
         "{\n"
         '  "run_useful": null,\n'
@@ -186,7 +271,7 @@ def apply_summary_fallback(label: QwenTeacherLabel, run_summary: dict[str, Any])
     if confidence == 0.0 and fallback_used:
         confidence = 0.55
 
-    return QwenTeacherLabel(
+    normalized = QwenTeacherLabel(
         run_useful=run_useful,
         role=role,
         issue_type=issue_type,
@@ -196,6 +281,7 @@ def apply_summary_fallback(label: QwenTeacherLabel, run_summary: dict[str, Any])
         confidence=confidence,
         rationale=rationale,
     ).normalized()
+    return _apply_scaffold_probe_fallback(normalized, run_summary)
 
 
 class LocalOllamaTeacher:

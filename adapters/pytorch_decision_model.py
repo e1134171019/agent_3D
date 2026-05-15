@@ -70,21 +70,6 @@ def _sample_weight_from_teacher_labels(teacher_labels: dict[str, Any] | None) ->
     return max(0.1, min(value, 1.0))
 
 
-def _probe_context(record: dict[str, Any]) -> dict[str, Any]:
-    payload = record.get("probe_context", {})
-    return payload if isinstance(payload, dict) else {}
-
-
-def _build_probe_context_vector(record: dict[str, Any]) -> list[float]:
-    context = _probe_context(record)
-    framework_name = str(context.get("framework_name", record.get("framework_name", "unknown")))
-    probe_status = str(context.get("probe_status", record.get("probe_status", "unknown")))
-    vector: list[float] = []
-    vector.extend(_one_hot(framework_name, FRAMEWORK_VOCAB))
-    vector.extend(_one_hot(probe_status, PROBE_STATUS_VOCAB))
-    return vector
-
-
 def _derive_backfill_runtime_bools(record: dict[str, Any]) -> list[float]:
     """Project run-level backfill facts into conservative runtime-style boolean hints."""
     unity_result = str(record.get("unity_result", "unknown"))
@@ -126,8 +111,6 @@ def feature_vector_dim() -> int:
         + len(SOURCE_MODULE_VOCAB)
         + len(PROBLEM_LAYER_VOCAB)
         + len(STAGE_VOCAB)
-        + len(FRAMEWORK_VOCAB)
-        + len(PROBE_STATUS_VOCAB)
     )
 
 
@@ -154,7 +137,6 @@ def build_feature_vector(record: dict[str, Any]) -> list[float]:
     vector.extend(_one_hot(str(record.get("selected_source_module", "unknown")), SOURCE_MODULE_VOCAB))
     vector.extend(_one_hot(str(record.get("problem_layer", "unknown")), PROBLEM_LAYER_VOCAB))
     vector.extend(_one_hot(str(record.get("contract_stage", "unknown")), STAGE_VOCAB))
-    vector.extend(_build_probe_context_vector(record))
     return vector
 
 
@@ -171,7 +153,6 @@ def build_backfill_feature_vector(record: dict[str, Any]) -> list[float]:
     vector.extend(_one_hot("unknown", SOURCE_MODULE_VOCAB))
     vector.extend(_one_hot(_map_issue_type_to_problem_layer(record.get("issue_type")), PROBLEM_LAYER_VOCAB))
     vector.extend(_one_hot(str(record.get("contract_stage", "unknown")), STAGE_VOCAB))
-    vector.extend(_build_probe_context_vector(record))
     return vector
 
 

@@ -94,6 +94,30 @@ class QwenTeacherTests(unittest.TestCase):
         self.assertIn("probe_context.probe_status=prepared", prompt)
         self.assertIn('"framework_name": "scaffold_gs"', prompt)
 
+    def test_scaffold_trained_not_tested_stays_pending(self):
+        label = module.QwenTeacherLabel(run_useful=None, unity_result="unknown")
+        summary = {
+            "psnr": 26.0,
+            "ssim": 0.92,
+            "lpips": 0.06,
+            "unity_result": "not_tested",
+            "probe_context": {"framework_name": "scaffold_gs", "probe_status": "trained"},
+        }
+        filled = module.apply_summary_fallback(label, summary)
+        self.assertIsNone(filled.run_useful)
+        self.assertEqual(filled.unity_result, "not_tested")
+
+    def test_scaffold_setup_blocked_becomes_negative(self):
+        label = module.QwenTeacherLabel(run_useful=None)
+        summary = {
+            "unity_result": "not_tested",
+            "probe_context": {"framework_name": "scaffold_gs", "probe_status": "setup_blocked"},
+        }
+        filled = module.apply_summary_fallback(label, summary)
+        self.assertIs(filled.run_useful, False)
+        self.assertEqual(filled.role, "failed_probe")
+        self.assertEqual(filled.issue_type, "framework")
+
 
 if __name__ == "__main__":
     unittest.main()
